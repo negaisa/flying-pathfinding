@@ -1,9 +1,12 @@
 [package]
 name = "flying-pathfinding"
 version = "0.1.0"
-authors = ["Vladislav Golub <vladislavs.golubs@yandex.ru>"]
+authors = ["vagola <vladislavs.golubs@yandex.ru>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
+byteorder = "1"
+bitvec = "0.17"
+
+[dev-dependencies]
+tempfile = "3.1"
