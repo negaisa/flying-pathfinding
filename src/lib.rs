@@ -48,7 +48,7 @@ impl Grid {
     }
 
     pub fn set_obstacle(&mut self, x: u32, y: u32, z: u32) {
-        let index = Self::index(x, y, z, self.width, self.height);
+        let index = Self::index(x, y, z, self.width);
 
         // It's safe because we already checked the bounds.
         unsafe {
@@ -57,18 +57,18 @@ impl Grid {
     }
 
     pub fn is_obstacle(&self, x: u32, y: u32, z: u32) -> bool {
-        let index = Self::index(x, y, z, self.width, self.height);
+        let index = Self::index(x, y, z, self.width);
 
         // It's safe because we already checked the bounds.
         unsafe { *self.data.get_unchecked(index) }
     }
 
-    fn index(x: u32, y: u32, z: u32, width: u32, height: u32) -> usize {
+    fn index(x: u32, y: u32, z: u32, width: u32) -> usize {
         assert!(width > x, "X-axis coordinate {} is out of bounds", x);
         assert!(width > y, "Y-axis coordinate {} is out of bounds", y);
         assert!(width > z, "Z-axis coordinate {} is out of bounds", z);
 
-        (x + width * (y + height * z)) as usize
+        (x + width * (y + width * z)) as usize
     }
 
     pub fn export<P: AsRef<Path>>(self, path: P) -> Result<(), Error> {
@@ -155,5 +155,80 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_obstacles2() {
+        let mut grid = Grid::new(12, 2);
+
+        for (x, y, z) in obstacles2_data() {
+            grid.set_obstacle(x, y, z);
+        }
+
+        for x in 0..grid.width {
+            for y in 0..grid.width {
+                for z in 0..grid.height {
+                    let in_data = obstacles2_data().contains(&(x, y, z));
+                    let in_grid = grid.is_obstacle(x, y, z);
+
+                    assert_eq!(
+                        in_data, in_grid,
+                        "Data and grid not match for x: {}, y: {}, z: {}",
+                        x, y, z
+                    );
+                }
+            }
+        }
+    }
+
+    fn obstacles2_data() -> Vec<(u32, u32, u32)> {
+        vec![
+            (1, 7, 1),
+            (1, 8, 1),
+            (2, 6, 1),
+            (2, 7, 1),
+            (2, 8, 1),
+            (3, 5, 1),
+            (3, 6, 1),
+            (3, 7, 1),
+            (3, 8, 1),
+            (4, 4, 1),
+            (4, 5, 1),
+            (4, 6, 1),
+            (4, 7, 1),
+            (4, 8, 1),
+            (5, 3, 1),
+            (5, 4, 1),
+            (5, 5, 1),
+            (5, 6, 1),
+            (5, 7, 1),
+            (5, 8, 1),
+            (6, 3, 1),
+            (6, 4, 1),
+            (6, 5, 1),
+            (6, 6, 1),
+            (6, 7, 1),
+            (6, 8, 1),
+            (7, 3, 1),
+            (7, 4, 1),
+            (7, 5, 1),
+            (7, 6, 1),
+            (7, 7, 1),
+            (7, 8, 1),
+            (8, 4, 1),
+            (8, 5, 1),
+            (8, 6, 1),
+            (8, 7, 1),
+            (8, 8, 1),
+            (9, 5, 1),
+            (9, 6, 1),
+            (9, 7, 1),
+            (9, 8, 1),
+            (10, 6, 1),
+            (10, 7, 1),
+            (10, 8, 1),
+            (11, 7, 1),
+            (11, 8, 1),
+        ]
     }
 }
