@@ -5,60 +5,62 @@ use std::collections::BinaryHeap;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
-pub trait Distance {
-    fn distance(&self, other: &Self) -> f32;
-}
-
 #[derive(Debug, Clone)]
 struct Node<L> {
-    location: L,
+    local_vector: L,
     cost: f32,
     estimated_cost: f32,
     previous_node_index: usize,
 }
 
-pub trait LocalLocationProvider<L: Distance + Ord + Eq + Hash + Clone + Debug> {
-    fn get_local_location(&self, vector: Vector3<f32>) -> Option<L>;
+pub trait LocalVectorProvider<L: Distance + Ord + Eq + Hash + Clone + Debug> {
+    /// Converts global vector to local vector.
+    fn get_local_vector(&self, vector: Vector3<f32>) -> Option<L>;
 
-    fn find_adjacent(&self, location: &L) -> Vec<(L, f32)>;
+    /// Returns a list of vacant neighbours with the cost of moving.
+    fn get_adjacent_vectors(&self, local_vector: &L) -> Vec<(L, f32)>;
 
-    fn to_global_location(&self, location: &L) -> Vector3<f32>;
+    /// Converts local vector to global vector.
+    fn to_global_vector(&self, local_vector: &L) -> Vector3<f32>;
 }
 
 #[derive(Debug)]
 pub enum PathfindingError {
+    /// The goal can't be reached.
     NoPath,
-    UnknownLocation,
+    /// Local vector provider was not able to convert global vector to local vector.
+    /// This may happen when trying find path out of map bounds.
+    UnresolvedGlobalVector,
 }
 
 /// Finds the path from one vector to another.
-/// Returns vec vectors to achieve the goal.
-pub fn find_path<L: Distance + Ord + Eq + Hash + Clone + Debug, LP: LocalLocationProvider<L>>(
+/// Returns list of vectors to achieve the goal.
+pub fn find_path<L: Distance + Ord + Eq + Hash + Clone + Debug, LP: LocalVectorProvider<L>>(
     start: Vector3<f32>,
     goal: Vector3<f32>,
-    location_provider: LP,
+    local_vector_provider: LP,
 ) -> Result<Vec<Vector3<f32>>, PathfindingError> {
     let mut reachable = BinaryHeap::new();
     let mut explored = IndexSet::new();
 
-    let start_location_opt = location_provider.get_local_location(start);
-    let goal_location_opt = location_provider.get_local_location(goal);
+    let start_local_vector_opt = local_vector_provider.get_local_vector(start);
+    let goal_local_vector_opt = local_vector_provider.get_local_vector(goal);
 
-    match (start_location_opt, goal_location_opt) {
-        (Some(start_location), Some(goal_location)) => {
-            let start_estimated_distance = start_location.distance(&goal_location);
+    match (start_local_vector_opt, goal_local_vector_opt) {
+        (Some(start_local_vector), Some(goal_local_vector)) => {
+            let start_estimated_distance = start_local_vector.distance(&goal_local_vector);
 
             reachable.push(Node {
-                location: start_location,
+                local_vector: start_local_vector,
                 cost: 0.0,
                 estimated_cost: start_estimated_distance,
                 previous_node_index: 0,
             });
 
             while let Some(current) = reachable.pop() {
-                if current.location == goal_location {
+                if current.local_vector == goal_local_vector {
                     let mut path = Vec::new();
-                    reconstruct_path(&current, location_provider, &explored, &mut path);
+                    reconstruct_path(&current, local_vector_provider, &explored, &mut path);
                     path.reverse();
 
                     return Ok(path);
@@ -66,14 +68,14 @@ pub fn find_path<L: Distance + Ord + Eq + Hash + Clone + Debug, LP: LocalLocatio
 
                 let (explored_node_index, _) = explored.insert_full(current.clone());
 
-                for (adjacent_location, cost) in location_provider
-                    .find_adjacent(&current.location)
+                for (adjacent_local_vector, cost) in local_vector_provider
+                    .get_adjacent_vectors(&current.local_vector)
                     .into_iter()
                 {
-                    let estimated_distance = adjacent_location.distance(&goal_location);
+                    let estimated_distance = adjacent_local_vector.distance(&goal_local_vector);
 
                     let mut adjacent_node = Node {
-                        location: adjacent_location,
+                        local_vector: adjacent_local_vector,
                         cost,
                         estimated_cost: estimated_distance,
                         previous_node_index: explored_node_index,
@@ -95,22 +97,26 @@ pub fn find_path<L: Distance + Ord + Eq + Hash + Clone + Debug, LP: LocalLocatio
 
             Err(PathfindingError::NoPath)
         }
-        _ => Err(PathfindingError::UnknownLocation),
+        _ => Err(PathfindingError::UnresolvedGlobalVector),
     }
 }
 
-fn reconstruct_path<L: Distance + Ord + Eq + Hash + Clone + Debug, LP: LocalLocationProvider<L>>(
+fn reconstruct_path<L: Distance + Ord + Eq + Hash + Clone + Debug, LP: LocalVectorProvider<L>>(
     node: &Node<L>,
-    location_provider: LP,
+    local_vector_provider: LP,
     explored: &IndexSet<Node<L>>,
     path: &mut Vec<Vector3<f32>>,
 ) {
-    path.push(location_provider.to_global_location(&node.location));
+    path.push(local_vector_provider.to_global_vector(&node.local_vector));
 
     if node.previous_node_index != 0 {
         let previous_node = explored.get_index(node.previous_node_index).unwrap();
-        reconstruct_path(&previous_node, location_provider, explored, path);
+        reconstruct_path(&previous_node, local_vector_provider, explored, path);
     }
+}
+
+pub trait Distance {
+    fn distance(&self, other: &Self) -> f32;
 }
 
 impl<L: Distance + Ord + Eq + Hash + Debug> PartialOrd for Node<L> {
@@ -132,31 +138,31 @@ impl<L: Distance + Ord + Eq + Hash + Debug> Eq for Node<L> {}
 
 impl<L: Distance + Ord + Eq + Hash + Debug> PartialEq for Node<L> {
     fn eq(&self, other: &Self) -> bool {
-        self.location.eq(&other.location)
+        self.local_vector.eq(&other.local_vector)
     }
 }
 
 impl<L: Distance + Ord + Eq + Hash + Debug> Hash for Node<L> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.location.hash(state)
+        self.local_vector.hash(state)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::pathfinding::{find_path, Distance, LocalLocationProvider};
+    use crate::pathfinding::{find_path, Distance, LocalVectorProvider};
     use nalgebra::Vector3;
 
     #[derive(Hash, Ord, PartialOrd, Eq, PartialEq, Clone, Debug)]
-    struct TestLocalLocation {
+    struct TestLocalVector {
         x: i32,
         y: i32,
         z: i32,
     }
 
-    impl TestLocalLocation {
+    impl TestLocalVector {
         fn add(&self, x: i32, y: i32, z: i32) -> Self {
-            TestLocalLocation {
+            TestLocalVector {
                 x: self.x + x,
                 y: self.y + y,
                 z: self.z + z,
@@ -164,7 +170,7 @@ mod tests {
         }
     }
 
-    impl Distance for TestLocalLocation {
+    impl Distance for TestLocalVector {
         fn distance(&self, other: &Self) -> f32 {
             let x = (self.x - other.x) as f32;
             let y = (self.y - other.y) as f32;
@@ -174,39 +180,46 @@ mod tests {
         }
     }
 
-    struct SimpleLocalLocationProvider {}
+    struct SimpleLocalVectorProvider {}
 
-    impl LocalLocationProvider<TestLocalLocation> for SimpleLocalLocationProvider {
-        fn get_local_location(&self, vector: Vector3<f32>) -> Option<TestLocalLocation> {
-            Some(TestLocalLocation {
+    impl LocalVectorProvider<TestLocalVector> for SimpleLocalVectorProvider {
+        fn get_local_vector(&self, vector: Vector3<f32>) -> Option<TestLocalVector> {
+            Some(TestLocalVector {
                 x: vector.x as i32,
                 y: vector.y as i32,
                 z: vector.z as i32,
             })
         }
 
-        fn find_adjacent(&self, location: &TestLocalLocation) -> Vec<(TestLocalLocation, f32)> {
+        fn get_adjacent_vectors(
+            &self,
+            local_vector: &TestLocalVector,
+        ) -> Vec<(TestLocalVector, f32)> {
             let mut adjacent = Vec::new();
 
-            let location1 = location.add(1, 0, 0);
-            let location2 = location.add(0, 1, 0);
-            let location3 = location.add(1, 1, 0);
-            let location4 = location.add(-1, -1, 0);
-            let location5 = location.add(1, -1, 0);
-            let location6 = location.add(-1, 1, 0);
+            let local_vector1 = local_vector.add(1, 0, 0);
+            let local_vector2 = local_vector.add(0, 1, 0);
+            let local_vector3 = local_vector.add(1, 1, 0);
+            let local_vector4 = local_vector.add(-1, -1, 0);
+            let local_vector5 = local_vector.add(1, -1, 0);
+            let local_vector6 = local_vector.add(-1, 1, 0);
 
-            adjacent.push((location1, 1.0));
-            adjacent.push((location2, 1.0));
-            adjacent.push((location3, 1.0));
-            adjacent.push((location4, 1.0));
-            adjacent.push((location5, 1.0));
-            adjacent.push((location6, 1.0));
+            adjacent.push((local_vector1, 1.0));
+            adjacent.push((local_vector2, 1.0));
+            adjacent.push((local_vector3, 1.0));
+            adjacent.push((local_vector4, 1.0));
+            adjacent.push((local_vector5, 1.0));
+            adjacent.push((local_vector6, 1.0));
 
             adjacent
         }
 
-        fn to_global_location(&self, location: &TestLocalLocation) -> Vector3<f32> {
-            Vector3::new(location.x as f32, location.y as f32, location.z as f32)
+        fn to_global_vector(&self, local_vector: &TestLocalVector) -> Vector3<f32> {
+            Vector3::new(
+                local_vector.x as f32,
+                local_vector.y as f32,
+                local_vector.z as f32,
+            )
         }
     }
 
@@ -215,9 +228,9 @@ mod tests {
         let start = Vector3::new(0.0, 0.0, 0.0);
         let goal = Vector3::new(10.0, 0.0, 0.0);
 
-        let simple_local_location_provider = SimpleLocalLocationProvider {};
+        let simple_local_local_vector_provider = SimpleLocalVectorProvider {};
 
-        let path = find_path(start, goal, simple_local_location_provider).unwrap();
+        let path = find_path(start, goal, simple_local_local_vector_provider).unwrap();
         assert_eq!(path.len(), 10);
 
         for i in 1..11 {
@@ -234,9 +247,9 @@ mod tests {
         let start = Vector3::new(0.0, 0.0, 0.0);
         let goal = Vector3::new(-10.0, -10.0, 0.0);
 
-        let simple_local_location_provider = SimpleLocalLocationProvider {};
+        let simple_local_local_vector_provider = SimpleLocalVectorProvider {};
 
-        let path = find_path(start, goal, simple_local_location_provider).unwrap();
+        let path = find_path(start, goal, simple_local_local_vector_provider).unwrap();
         assert_eq!(path.len(), 10);
 
         for i in 1..11 {
@@ -248,49 +261,56 @@ mod tests {
         }
     }
 
-    struct WalledLocalLocationProvider {}
+    struct WalledLocalVectorProvider {}
 
-    impl LocalLocationProvider<TestLocalLocation> for WalledLocalLocationProvider {
-        fn get_local_location(&self, vector: Vector3<f32>) -> Option<TestLocalLocation> {
-            Some(TestLocalLocation {
+    impl LocalVectorProvider<TestLocalVector> for WalledLocalVectorProvider {
+        fn get_local_vector(&self, vector: Vector3<f32>) -> Option<TestLocalVector> {
+            Some(TestLocalVector {
                 x: vector.x as i32,
                 y: vector.y as i32,
                 z: vector.z as i32,
             })
         }
 
-        fn find_adjacent(&self, location: &TestLocalLocation) -> Vec<(TestLocalLocation, f32)> {
-            fn add(location: TestLocalLocation, adjacent: &mut Vec<(TestLocalLocation, f32)>) {
-                if location.x == 5 {
-                    if 5 > location.y.abs() {
+        fn get_adjacent_vectors(
+            &self,
+            local_vector: &TestLocalVector,
+        ) -> Vec<(TestLocalVector, f32)> {
+            fn add(local_vector: TestLocalVector, adjacent: &mut Vec<(TestLocalVector, f32)>) {
+                if local_vector.x == 5 {
+                    if 5 > local_vector.y.abs() {
                         return;
                     }
                 }
 
-                adjacent.push((location, 1.0));
+                adjacent.push((local_vector, 1.0));
             }
 
             let mut adjacent = Vec::new();
 
-            let location1 = location.add(1, 0, 0);
-            let location2 = location.add(0, 1, 0);
-            let location3 = location.add(1, 1, 0);
-            let location4 = location.add(-1, -1, 0);
-            let location5 = location.add(1, -1, 0);
-            let location6 = location.add(-1, 1, 0);
+            let local_vector1 = local_vector.add(1, 0, 0);
+            let local_vector2 = local_vector.add(0, 1, 0);
+            let local_vector3 = local_vector.add(1, 1, 0);
+            let local_vector4 = local_vector.add(-1, -1, 0);
+            let local_vector5 = local_vector.add(1, -1, 0);
+            let local_vector6 = local_vector.add(-1, 1, 0);
 
-            add(location1, &mut adjacent);
-            add(location2, &mut adjacent);
-            add(location3, &mut adjacent);
-            add(location4, &mut adjacent);
-            add(location5, &mut adjacent);
-            add(location6, &mut adjacent);
+            add(local_vector1, &mut adjacent);
+            add(local_vector2, &mut adjacent);
+            add(local_vector3, &mut adjacent);
+            add(local_vector4, &mut adjacent);
+            add(local_vector5, &mut adjacent);
+            add(local_vector6, &mut adjacent);
 
             adjacent
         }
 
-        fn to_global_location(&self, location: &TestLocalLocation) -> Vector3<f32> {
-            Vector3::new(location.x as f32, location.y as f32, location.z as f32)
+        fn to_global_vector(&self, local_vector: &TestLocalVector) -> Vector3<f32> {
+            Vector3::new(
+                local_vector.x as f32,
+                local_vector.y as f32,
+                local_vector.z as f32,
+            )
         }
     }
 
@@ -299,9 +319,9 @@ mod tests {
         let start = Vector3::new(0.0, 0.0, 0.0);
         let goal = Vector3::new(10.0, 0.0, 0.0);
 
-        let walled_local_location_provider = WalledLocalLocationProvider {};
+        let walled_local_local_vector_provider = WalledLocalVectorProvider {};
 
-        let path = find_path(start, goal, walled_local_location_provider).unwrap();
+        let path = find_path(start, goal, walled_local_local_vector_provider).unwrap();
         assert_eq!(path.len(), 13);
 
         // #
