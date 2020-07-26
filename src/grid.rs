@@ -4,6 +4,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Error, Read, Write};
 use std::path::Path;
 
+#[derive(Debug)]
 pub struct Grid {
     pub width: u32,
     pub height: u32,
