@@ -6,45 +6,48 @@ pub trait GridProvider {
     fn is_obstacle(&self, vector: Vector3<f32>) -> bool;
 }
 
-pub struct FolderGridProvider<'a, ATT, GFN>
+pub struct FolderGridProvider<'a, ATG, GTA, GFN>
 where
-    ATT: Fn(f32) -> u32,
+    ATG: Fn(f32) -> u32,
+    GTA: Fn(u32) -> f32,
     GFN: Fn(u32, u32) -> String,
 {
     /// Folder where grid files located.
     grid_folder_path: &'a Path,
-    /// Width of grid.
-    grid_width: u32,
     /// Function to convert axis to grid id.
-    axis_to_grid_id_fn: ATT,
+    axis_to_grid_id_fn: ATG,
+    /// Function to convert grid id to axis.
+    grid_id_to_axis_fn: GTA,
     /// Function to format grid format name.
     /// 1, 1 => grid_1_1.dat
     grid_file_name_fn: GFN,
 }
 
-impl<'a, ATT, GFN> FolderGridProvider<'a, ATT, GFN>
+impl<'a, ATG, GTA, GFN> FolderGridProvider<'a, ATG, GTA, GFN>
 where
-    ATT: Fn(f32) -> u32,
+    ATG: Fn(f32) -> u32,
+    GTA: Fn(u32) -> f32,
     GFN: Fn(u32, u32) -> String,
 {
     pub fn new(
         grid_folder_path: &'a Path,
-        grid_width: u32,
-        axis_to_grid_id_fn: ATT,
+        axis_to_grid_id_fn: ATG,
+        grid_id_to_axis_fn: GTA,
         grid_file_name_fn: GFN,
     ) -> Self {
         FolderGridProvider {
             grid_folder_path,
-            grid_width,
             axis_to_grid_id_fn,
+            grid_id_to_axis_fn,
             grid_file_name_fn,
         }
     }
 }
 
-impl<'a, ATT, GFN> GridProvider for FolderGridProvider<'a, ATT, GFN>
+impl<'a, ATG, GTA, GFN> GridProvider for FolderGridProvider<'a, ATG, GTA, GFN>
 where
-    ATT: Fn(f32) -> u32,
+    ATG: Fn(f32) -> u32,
+    GTA: Fn(u32) -> f32,
     GFN: Fn(u32, u32) -> String,
 {
     fn is_obstacle(&self, vector: Vector3<f32>) -> bool {
@@ -54,8 +57,17 @@ where
         let grid_path = self.grid_folder_path.join(&grid_file_name);
 
         match Grid::import(grid_path) {
-            Ok(grid) => grid.is_obstacle(0, 0, 0),
-            Err(_) => false,
+            Ok(grid) if (vector.z >= 0.0 && vector.z <= grid.height as f32) => {
+                let grid_start_x = (self.grid_id_to_axis_fn)(grid_x);
+                let grid_start_y = (self.grid_id_to_axis_fn)(grid_y);
+
+                let x = (grid_start_x - vector.x).round() as u32;
+                let y = (grid_start_y - vector.y).round() as u32;
+                let z = vector.z.round() as u32;
+
+                grid.is_obstacle(x, y, z)
+            }
+            _ => false,
         }
     }
 }
@@ -69,12 +81,17 @@ mod tests {
     #[test]
     fn test_is_obstacle() {
         let axis_to_grid_id_fn = |axis: f32| (32.0 - (axis / 533.33)).floor() as u32;
+        let grid_id_to_axis_fn = |grid_id| (32.0 - grid_id as f32) * 533.3;
         let grid_file_name_fn = |x, y| format!("grid_{}_{}.dat", x, y);
         let grid_folder_path = Path::new("test/map_1718");
 
-        let grid_provider =
-            FolderGridProvider::new(grid_folder_path, 534, axis_to_grid_id_fn, grid_file_name_fn);
+        let grid_provider = FolderGridProvider::new(
+            grid_folder_path,
+            axis_to_grid_id_fn,
+            grid_id_to_axis_fn,
+            grid_file_name_fn,
+        );
 
-        grid_provider.is_obstacle(Vector3::new(375.0, -13904.166016, 1000.0));
+        assert!(grid_provider.is_obstacle(Vector3::new(-1604.0, 1163.0, 111.0)));
     }
 }
